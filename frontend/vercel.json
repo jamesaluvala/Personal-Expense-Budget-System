@@ -7,7 +7,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://replace-me.up.railway.app/api/:path*"
+      "destination": "https://personal-expense-budget-system-production.up.railway.app/api/:path*"
     }
   ],
   "headers": [
