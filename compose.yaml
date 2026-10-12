@@ -1,0 +1,32 @@
+services:
+  db:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: expense_budget
+      MYSQL_USER: expense_app
+      MYSQL_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    # No host database port is exposed.
+  app:
+    build: .
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      DB_URL: jdbc:mysql://db:3306/expense_budget?sslMode=DISABLED&allowPublicKeyRetrieval=true&connectionTimeZone=UTC
+      DB_USER: expense_app
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+      COOKIE_SECURE: "false"
+      APP_CURRENCY: ${APP_CURRENCY:-INR}
+      APP_TIME_ZONE: ${APP_TIME_ZONE:-Asia/Kolkata}
+    depends_on:
+      db:
+        condition: service_healthy
+volumes:
+  mysql_data:

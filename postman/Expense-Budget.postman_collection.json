@@ -1,0 +1,761 @@
+{
+  "info": {
+    "name": "Personal Expense & Budget - Real API Tests",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Run in order against a disposable hosted/test database. Creates a unique test account and clearly marked real test entries, then deletes those entries. The test account/category labels remain. All mutating requests automatically fetch a CSRF token; enable cookies. Never use with a personal financial account."
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const base = pm.environment.get('baseUrl');",
+          "if (!base || base.includes('replace-me')) throw new Error('Set baseUrl to your actual HTTPS app URL (without /api).');",
+          "if (['POST','PUT','DELETE'].includes(pm.request.method)) {",
+          "  pm.sendRequest({url: base.replace(/\\/$/, '') + '/api/auth/csrf', method:'GET'}, (err,res) => {",
+          "    if (err || res.code !== 200) throw new Error('Cannot obtain CSRF token; check baseUrl, cookies and backend health.');",
+          "    const csrf = res.json();",
+          "    pm.request.headers.upsert({key:csrf.headerName, value:csrf.token});",
+          "  });",
+          "}"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "01 - Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/api/health"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "pm.test('Database healthy', () => pm.expect(pm.response.json().status).to.eql('UP'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 - Current date and currency",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/api/meta"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "const m=pm.response.json();",
+              "pm.collectionVariables.set('today',m.today); pm.collectionVariables.set('month',m.today.slice(0,7));",
+              "const d=new Date(m.today+'T12:00:00Z'); d.setUTCMonth(d.getUTCMonth()+6);",
+              "pm.collectionVariables.set('targetDate',d.toISOString().slice(0,10));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 - Register unique TEST account",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/auth/register",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Postman Test User\",\n  \"email\": \"{{testEmail}}\",\n  \"password\": \"{{testPassword}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const id=pm.variables.replaceIn('{{$guid}}'); pm.collectionVariables.set('testEmail','postman-'+id+'@example.com'); pm.collectionVariables.set('testPassword','Test-only-'+id+'!');"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 201', () => pm.response.to.have.status(201));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 - Login (form body)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/x-www-form-urlencoded"
+          }
+        ],
+        "url": "{{baseUrl}}/api/auth/login",
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            {
+              "key": "email",
+              "value": "{{testEmail}}",
+              "type": "text"
+            },
+            {
+              "key": "password",
+              "value": "{{testPassword}}",
+              "type": "text"
+            }
+          ]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 - Private profile",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/api/auth/me"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "pm.test('No password returned', () => pm.expect(pm.response.json()).not.to.have.property('passwordHash'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 - Get starter categories",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/api/categories"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "const c=pm.response.json();",
+              "pm.collectionVariables.set('incomeCategory',c.find(x=>x.type==='INCOME').id);",
+              "pm.collectionVariables.set('expenseCategory',c.find(x=>x.type==='EXPENSE').id);",
+              "pm.test('Ten labels only',()=>pm.expect(c.length).to.eql(10));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "07 - Verify empty financial account",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/api/dashboard?month={{month}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "pm.test('No seeded financial data',()=>pm.expect(pm.response.json().transactionCount).to.eql(0));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "08 - Create TEST income",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/income",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"type\": \"INCOME\",\n  \"categoryId\": {{incomeCategory}},\n  \"amount\": \"1000.10\",\n  \"date\": \"{{today}}\",\n  \"description\": \"POSTMAN TEST income\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+              "pm.collectionVariables.set('incomeId',pm.response.json().id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "09 - Create TEST expense",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/expenses",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"type\": \"EXPENSE\",\n  \"categoryId\": {{expenseCategory}},\n  \"amount\": \"250.05\",\n  \"date\": \"{{today}}\",\n  \"description\": \"POSTMAN TEST expense\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+              "pm.collectionVariables.set('expenseId',pm.response.json().id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "10 - Verify exact dashboard totals",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/api/dashboard?month={{month}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "const d=pm.response.json();",
+              "pm.test('Exact income',()=>pm.expect(d.income).to.eql('1000.10'));",
+              "pm.test('Exact expenses',()=>pm.expect(d.expenses).to.eql('250.05'));",
+              "pm.test('Exact net savings',()=>pm.expect(d.netSavings).to.eql('750.05'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "11 - Set monthly TEST budget",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/budgets",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"month\": \"{{month}}\",\n  \"amount\": \"200.00\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "pm.test('Budget exceeded',()=>pm.expect(pm.response.json().status).to.eql('EXCEEDED'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "12 - Edit TEST expense",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/transactions/EXPENSE/{{expenseId}}",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"type\": \"EXPENSE\",\n  \"categoryId\": {{expenseCategory}},\n  \"amount\": \"100.05\",\n  \"date\": \"{{today}}\",\n  \"description\": \"POSTMAN TEST expense edited\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "13 - Budget recalculates after edit",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/api/budgets?month={{month}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "const b=pm.response.json(); pm.test('Budget now on track',()=>pm.expect(b.status).to.eql('ON_TRACK')); pm.test('Remaining exact',()=>pm.expect(b.remaining).to.eql('99.95'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "14 - Filter TEST transactions",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/api/transactions?type=EXPENSE&search=POSTMAN&sort=amount_desc&page=0&size=20"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "pm.test('One owned expense',()=>pm.expect(pm.response.json().total).to.eql(1));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "15 - Reject negative amount",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/expenses",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"type\": \"EXPENSE\",\n  \"categoryId\": {{expenseCategory}},\n  \"amount\": \"-1.00\",\n  \"date\": \"{{today}}\",\n  \"description\": \"Invalid amount test\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 400', () => pm.response.to.have.status(400));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "16 - Create TEST goal",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/goals",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"title\": \"POSTMAN TEST goal\",\n  \"targetAmount\": \"500.00\",\n  \"targetDate\": \"{{targetDate}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+              "pm.collectionVariables.set('goalId',pm.response.json().id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "17 - Reserve TEST savings",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/goals/{{goalId}}/contributions",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"amount\": \"200.00\",\n  \"date\": \"{{today}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+              "pm.test('Progress 40 percent',()=>pm.expect(Number(pm.response.json().progress)).to.eql(40));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "18 - Savings are not expenses",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/api/dashboard?month={{month}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "const d=pm.response.json(); pm.test('Expense unchanged',()=>pm.expect(d.expenses).to.eql('100.05')); pm.test('Available balance',()=>pm.expect(d.availableBalance).to.eql('700.05'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "19 - Reject excessive goal contribution",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/goals/{{goalId}}/contributions",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"amount\": \"301.00\",\n  \"date\": \"{{today}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 409', () => pm.response.to.have.status(409));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "20 - Read monthly report",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/api/reports?month={{month}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "pm.test('Two rows in report',()=>pm.expect(pm.response.json().transactions.length).to.eql(2));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "21 - Download CSV",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/api/reports/export.csv?month={{month}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "pm.test('CSV response',()=>pm.expect(pm.response.headers.get('Content-Type')).to.include('text/csv')); pm.test('Actual totals',()=>pm.expect(pm.response.text()).to.include('1000.10,100.05,900.05'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "22 - Get contribution ID",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/api/goals/{{goalId}}/contributions"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+              "pm.collectionVariables.set('contributionId',pm.response.json()[0].id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "23 - Release TEST contribution",
+      "request": {
+        "method": "DELETE",
+        "header": [],
+        "url": "{{baseUrl}}/api/goals/{{goalId}}/contributions/{{contributionId}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "24 - Delete TEST goal",
+      "request": {
+        "method": "DELETE",
+        "header": [],
+        "url": "{{baseUrl}}/api/goals/{{goalId}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "25 - Delete TEST expense",
+      "request": {
+        "method": "DELETE",
+        "header": [],
+        "url": "{{baseUrl}}/api/transactions/EXPENSE/{{expenseId}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "26 - Delete TEST income",
+      "request": {
+        "method": "DELETE",
+        "header": [],
+        "url": "{{baseUrl}}/api/transactions/INCOME/{{incomeId}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "27 - Remove TEST budget",
+      "request": {
+        "method": "DELETE",
+        "header": [],
+        "url": "{{baseUrl}}/api/budgets/{{month}}"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "28 - Logout",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "url": "{{baseUrl}}/api/auth/logout"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 204', () => pm.response.to.have.status(204));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "29 - Reject signed-out access",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{baseUrl}}/api/auth/me"
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('HTTP 401', () => pm.response.to.have.status(401));"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "variable": []
+}

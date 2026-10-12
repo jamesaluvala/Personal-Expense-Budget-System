@@ -1,0 +1,77 @@
+name: Verify full stack
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_DATABASE: expense_budget_test
+          MYSQL_USER: budget_test
+          MYSQL_PASSWORD: ci-only-disposable-password
+          MYSQL_ROOT_PASSWORD: ci-only-disposable-root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -pci-only-disposable-root --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Frontend utilities and real production build
+        working-directory: frontend
+        run: npm install --no-audit --no-fund && npm test && npm run build
+      - name: Include React in the Spring Boot application
+        run: mkdir -p backend/src/main/resources/static && cp -r frontend/dist/. backend/src/main/resources/static/
+      - name: Java unit and H2 integration tests
+        run: mvn -B -ntp -f backend/pom.xml verify
+      - name: Repeat integration tests against actual MySQL
+        run: mvn -B -ntp -f backend/pom.xml verify
+        env:
+          TEST_DB_URL: jdbc:mysql://127.0.0.1:3306/expense_budget_test?sslMode=DISABLED&allowPublicKeyRetrieval=true&connectionTimeZone=UTC
+          TEST_DB_USER: budget_test
+          TEST_DB_PASSWORD: ci-only-disposable-password
+      - name: Start the actual application for browser tests
+        run: |
+          java -jar backend/target/expense-budget.jar > app.log 2>&1 &
+          for attempt in $(seq 1 90); do
+            if curl --fail --silent http://127.0.0.1:8080/api/health; then exit 0; fi
+            sleep 2
+          done
+          cat app.log
+          exit 1
+        env:
+          DB_URL: jdbc:mysql://127.0.0.1:3306/expense_budget_test?sslMode=DISABLED&allowPublicKeyRetrieval=true&connectionTimeZone=UTC
+          DB_USER: budget_test
+          DB_PASSWORD: ci-only-disposable-password
+          COOKIE_SECURE: 'false'
+          APP_CURRENCY: INR
+          APP_TIME_ZONE: UTC
+      - name: Install browser testing dependencies
+        working-directory: e2e
+        run: npm install --no-audit --no-fund && npx playwright install --with-deps chromium
+      - name: Test UI with real backend and MySQL
+        working-directory: e2e
+        run: npm test
+        env:
+          APP_URL: http://127.0.0.1:8080
+      - name: Show application log on failure
+        if: failure()
+        run: if test -f app.log; then tail -n 120 app.log; fi
